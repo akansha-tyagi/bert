@@ -29,6 +29,7 @@ import tokenization
 import six
 import tensorflow as tf
 
+
 flags = tf.flags
 
 FLAGS = flags.FLAGS
@@ -153,6 +154,8 @@ flags.DEFINE_float(
     "null_score_diff_threshold", 0.0,
     "If null_score - best_non_null is greater than the threshold predict null.")
 
+Types_of_question = 5
+
 
 class SquadExample(object):
   """A single training/test example for simple sequence classification.
@@ -167,6 +170,8 @@ class SquadExample(object):
                orig_answer_text=None,
                start_position=None,
                end_position=None,
+               #modified
+               question_type=None,
                is_impossible=False):
     self.qas_id = qas_id
     self.question_text = question_text
@@ -174,6 +179,8 @@ class SquadExample(object):
     self.orig_answer_text = orig_answer_text
     self.start_position = start_position
     self.end_position = end_position
+    #modified
+    self.question_type = question_type
     self.is_impossible = is_impossible
 
   def __str__(self):
@@ -189,6 +196,11 @@ class SquadExample(object):
       s += ", start_position: %d" % (self.start_position)
     if self.start_position:
       s += ", end_position: %d" % (self.end_position)
+
+    #modified
+    if self.start_position:
+      s += ", question_type: %d" % (self.question_type)
+
     if self.start_position:
       s += ", is_impossible: %r" % (self.is_impossible)
     return s
@@ -209,6 +221,10 @@ class InputFeatures(object):
                segment_ids,
                start_position=None,
                end_position=None,
+
+               #modified
+               question_type=None,
+
                is_impossible=None):
     self.unique_id = unique_id
     self.example_index = example_index
@@ -221,7 +237,22 @@ class InputFeatures(object):
     self.segment_ids = segment_ids
     self.start_position = start_position
     self.end_position = end_position
+
+    #modified
+    self.question_type = question_type
+
     self.is_impossible = is_impossible
+
+
+#modified
+def get_question_type(f_word):
+    if f_word == "What":
+        question_type = 1
+    elif f_word == "Even":
+        question_type = 4
+
+    return question_type
+
 
 
 def read_squad_examples(input_file, is_training):
@@ -253,10 +284,19 @@ def read_squad_examples(input_file, is_training):
         char_to_word_offset.append(len(doc_tokens) - 1)
 
       for qa in paragraph["qas"]:
+        #modified
+        f_word = qa["question"].split()[0]
+        if(f_word != "What"):
+            continue
+
         qas_id = qa["id"]
         question_text = qa["question"]
         start_position = None
         end_position = None
+
+        #modified
+        question_type = None
+
         orig_answer_text = None
         is_impossible = False
         if is_training:
@@ -274,6 +314,11 @@ def read_squad_examples(input_file, is_training):
             start_position = char_to_word_offset[answer_offset]
             end_position = char_to_word_offset[answer_offset + answer_length -
                                                1]
+
+
+            #modified
+            question_type = get_question_type(f_word)
+
             # Only add answers where the text can be exactly recovered from the
             # document. If this CAN'T happen it's likely due to weird Unicode
             # stuff so we will just skip the example.
@@ -291,7 +336,15 @@ def read_squad_examples(input_file, is_training):
           else:
             start_position = -1
             end_position = -1
+
+            #modified
+            question_type = -1
+
             orig_answer_text = ""
+
+        #modified
+        print("---------- First -------------")
+        print(question_type)
 
         example = SquadExample(
             qas_id=qas_id,
@@ -300,6 +353,8 @@ def read_squad_examples(input_file, is_training):
             orig_answer_text=orig_answer_text,
             start_position=start_position,
             end_position=end_position,
+            #modified
+            question_type=question_type,
             is_impossible=is_impossible)
         examples.append(example)
 
@@ -406,6 +461,10 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
 
       start_position = None
       end_position = None
+
+      #modified
+      question_type = None
+
       if is_training and not example.is_impossible:
         # For training, if our document chunk does not contain an annotation
         # we throw it out, since there is nothing to predict.
@@ -418,14 +477,26 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
         if out_of_span:
           start_position = 0
           end_position = 0
+
+          #modified
+          question_type = None
+
         else:
           doc_offset = len(query_tokens) + 2
           start_position = tok_start_position - doc_start + doc_offset
           end_position = tok_end_position - doc_start + doc_offset
 
+          #modified
+          question_type = example.question_type
+
+
       if is_training and example.is_impossible:
         start_position = 0
         end_position = 0
+
+        #modified
+        question_type = 0
+
 
       if example_index < 20:
         tf.logging.info("*** Example ***")
@@ -450,6 +521,10 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
           answer_text = " ".join(tokens[start_position:(end_position + 1)])
           tf.logging.info("start_position: %d" % (start_position))
           tf.logging.info("end_position: %d" % (end_position))
+
+          #modified
+          tf.logging.info("question_type: %d" % (question_type))
+
           tf.logging.info(
               "answer: %s" % (tokenization.printable_text(answer_text)))
 
@@ -465,6 +540,10 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
           segment_ids=segment_ids,
           start_position=start_position,
           end_position=end_position,
+
+          #modified
+          question_type=question_type,
+
           is_impossible=example.is_impossible)
 
       # Run callback
@@ -584,7 +663,32 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
 
   (start_logits, end_logits) = (unstacked_logits[0], unstacked_logits[1])
 
-  return (start_logits, end_logits)
+
+  #modified for additional layers
+  print("lllllllllllllll")
+
+  # Get the logits for the answer type prediction.
+  question_type_output_layer = model.get_pooled_output()
+  question_type_hidden_size = question_type_output_layer.shape[-1]
+
+  num_question_types = 5  # What, When, Why, Where, Even
+  question_type_output_weights = tf.get_variable(
+      "question_type_output_weights", [num_question_types, question_type_hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.02))
+
+  question_type_output_bias = tf.get_variable(
+      "question_type_output_bias", [num_question_types],
+      initializer=tf.zeros_initializer())
+
+  question_type_logits = tf.matmul(
+      question_type_output_layer, question_type_output_weights, transpose_b=True)
+  question_type_logits = tf.nn.bias_add(question_type_logits,
+                                      question_type_output_bias)
+  print("lllllllllllllll")
+
+
+  # return (start_logits, end_logits)
+  return (start_logits, end_logits, question_type_logits)
 
 
 def model_fn_builder(bert_config, init_checkpoint, learning_rate,
@@ -606,7 +710,9 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
 
     is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
-    (start_logits, end_logits) = create_model(
+    #modified
+    (start_logits, end_logits, question_type_logits) = create_model(
+    # (start_logits, end_logits, question_type_logits) = create_model(
         bert_config=bert_config,
         is_training=is_training,
         input_ids=input_ids,
@@ -651,13 +757,33 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
             tf.reduce_sum(one_hot_positions * log_probs, axis=-1))
         return loss
 
+
+      #modified
+      def compute_label_loss(logits, labels):
+        one_hot_labels = tf.one_hot(
+            labels, depth=Types_of_question, dtype=tf.float32)
+        log_probs = tf.nn.log_softmax(logits, axis=-1)
+        loss = -tf.reduce_mean(
+            tf.reduce_sum(one_hot_labels * log_probs, axis=-1))
+        return loss
+
+
       start_positions = features["start_positions"]
       end_positions = features["end_positions"]
+
+      #modified
+      question_type = features["question_type"]
+
 
       start_loss = compute_loss(start_logits, start_positions)
       end_loss = compute_loss(end_logits, end_positions)
 
-      total_loss = (start_loss + end_loss) / 2.0
+      #modified
+      question_type_loss = compute_label_loss(question_type_logits, question_type)
+      total_loss = (start_loss + end_loss + question_type_loss) / 3.0
+
+
+      # total_loss = (start_loss + end_loss) / 2.0
 
       train_op = optimization.create_optimizer(
           total_loss, learning_rate, num_train_steps, num_warmup_steps, use_tpu)
@@ -697,6 +823,9 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder):
   if is_training:
     name_to_features["start_positions"] = tf.FixedLenFeature([], tf.int64)
     name_to_features["end_positions"] = tf.FixedLenFeature([], tf.int64)
+
+    #modified
+    name_to_features["question_type"] = tf.FixedLenFeature([], tf.int64)
 
   def _decode_record(record, name_to_features):
     """Decodes a record to a TensorFlow example."""
@@ -1073,6 +1202,10 @@ class FeatureWriter(object):
           int64_list=tf.train.Int64List(value=list(values)))
       return feature
 
+    #modified
+    print("---------- Second -------------")
+
+
     features = collections.OrderedDict()
     features["unique_ids"] = create_int_feature([feature.unique_id])
     features["input_ids"] = create_int_feature(feature.input_ids)
@@ -1082,6 +1215,10 @@ class FeatureWriter(object):
     if self.is_training:
       features["start_positions"] = create_int_feature([feature.start_position])
       features["end_positions"] = create_int_feature([feature.end_position])
+
+      #modified
+      features["question_type"] = create_int_feature([feature.question_type])
+
       impossible = 0
       if feature.is_impossible:
         impossible = 1
@@ -1157,7 +1294,12 @@ def main(_):
   if FLAGS.do_train:
     train_examples = read_squad_examples(
         input_file=FLAGS.train_file, is_training=True)
-    num_train_steps = int(
+
+    #modified
+    # num_train_steps = int(
+    #     len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
+
+    num_train_steps = 2*int(
         len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
 
@@ -1217,6 +1359,11 @@ def main(_):
   if FLAGS.do_predict:
     eval_examples = read_squad_examples(
         input_file=FLAGS.predict_file, is_training=False)
+
+    #modified
+    print("..................")
+    print("length : " + str(len(eval_examples)))
+    print("..................")
 
     eval_writer = FeatureWriter(
         filename=os.path.join(FLAGS.output_dir, "eval.tf_record"),
