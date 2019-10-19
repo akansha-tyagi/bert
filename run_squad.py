@@ -223,7 +223,7 @@ class InputFeatures(object):
                end_position=None,
 
                #modified
-               question_type=None,
+               question_type=0,
 
                is_impossible=None):
     self.unique_id = unique_id
@@ -246,10 +246,14 @@ class InputFeatures(object):
 
 #modified
 def get_question_type(f_word):
+    """ Valid question type will start from 1 """
+
     if f_word == "What":
         question_type = 1
     elif f_word == "Even":
-        question_type = 4
+        question_type = 6
+    elif f_word == "Because":
+        question_type = 3
 
     return question_type
 
@@ -286,7 +290,7 @@ def read_squad_examples(input_file, is_training):
       for qa in paragraph["qas"]:
         #modified
         f_word = qa["question"].split()[0]
-        if(f_word != "What"):
+        if(f_word != "Because"):
             continue
 
         qas_id = qa["id"]
@@ -295,7 +299,7 @@ def read_squad_examples(input_file, is_training):
         end_position = None
 
         #modified
-        question_type = None
+        question_type = get_question_type(f_word)
 
         orig_answer_text = None
         is_impossible = False
@@ -314,10 +318,6 @@ def read_squad_examples(input_file, is_training):
             start_position = char_to_word_offset[answer_offset]
             end_position = char_to_word_offset[answer_offset + answer_length -
                                                1]
-
-
-            #modified
-            question_type = get_question_type(f_word)
 
             # Only add answers where the text can be exactly recovered from the
             # document. If this CAN'T happen it's likely due to weird Unicode
@@ -338,13 +338,9 @@ def read_squad_examples(input_file, is_training):
             end_position = -1
 
             #modified
-            question_type = -1
+            # question_type = -1
 
             orig_answer_text = ""
-
-        #modified
-        print("---------- First -------------")
-        print(question_type)
 
         example = SquadExample(
             qas_id=qas_id,
@@ -463,7 +459,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
       end_position = None
 
       #modified
-      question_type = None
+      question_type = 0
 
       if is_training and not example.is_impossible:
         # For training, if our document chunk does not contain an annotation
@@ -479,7 +475,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
           end_position = 0
 
           #modified
-          question_type = None
+          question_type = 0
 
         else:
           doc_offset = len(query_tokens) + 2
@@ -626,7 +622,7 @@ def _check_is_max_context(doc_spans, cur_span_index, position):
   return cur_span_index == best_span_index
 
 
-def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
+def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,question_type,
                  use_one_hot_embeddings):
   """Creates a classification model."""
   model = modeling.BertModel(
@@ -637,7 +633,75 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
       token_type_ids=segment_ids,
       use_one_hot_embeddings=use_one_hot_embeddings)
 
+
+  #modified
+  sample = tf.constant([1,2,3])
+
+
+  print("......................")
+  print("......................")
+  # print(question_type.get_shape())
+  # print(tf.shape(input_ids))
+  # print(tf.shape(question_type))
+  
+  
+  # sess = tf.Session()
+  # with sess.as_default():
+  #   # tensor = tf.range(10)
+  #   sample = tf.constant([1,2,3])
+  #   print_op = tf.print(tensor)
+  #   with tf.control_dependencies([print_op]):
+  #     out = tf.add(tensor, tensor)
+  #   sess.run(out)
+
+  # d = tf.data.TFRecordDataset(question_type)
+  # print(d)
+  
+  # iterator = d.Dataset.make_initializable_iterator()
+  # next_element = iterator.get_next()
+
+  # with tf.Session() as sess:
+  #     for i in range(100):
+  #       value = sess.run(next_element)
+  #       print(value, end=" ")
+  # with tf.compat.v1.Session() as sess:
+  #   sess.run(validation_iterator.initializer)
+  #   try:
+  #     while True:
+  #       print(sess.run(question_type))
+  #   except tf.errors.OutOfRangeError:
+  #     pass
+
+  # iterator = question_type
+  # next_batch = iterator.get_next()
+  # with tf.Session() as sess:
+  #   sess.run(tf.global_variables_initializer())
+
+  #   try: 
+  #       # Keep running next_batch till the Dataset is exhausted
+  #       while True:
+  #           sess.run(next_batch)
+            
+  #   except tf.errors.OutOfRangeError:
+  #       pass
+  
+  # with tf.Session() as sess:
+  #   # sess.run(validation_iterator.initializer)
+  #   print(question_type.eval())
+
+  # tf.Print(sample)
+  print(input_ids)
+  print(question_type)
+
+  if(question_type == 0):
+    print("Hello")
+
+  print("......................")
+  print("......................")
+
   final_hidden = model.get_sequence_output()
+
+  print("$$$$$$$$$ " + str(final_hidden))
 
   final_hidden_shape = modeling.get_shape_list(final_hidden, expected_rank=3)
   batch_size = final_hidden_shape[0]
@@ -708,6 +772,10 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
     input_mask = features["input_mask"]
     segment_ids = features["segment_ids"]
 
+    #modified
+    question_type = features["question_type"]
+    
+
     is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
     #modified
@@ -718,6 +786,10 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
         input_ids=input_ids,
         input_mask=input_mask,
         segment_ids=segment_ids,
+
+        #modified
+        question_type=question_type,
+
         use_one_hot_embeddings=use_one_hot_embeddings)
 
     tvars = tf.trainable_variables()
@@ -771,10 +843,6 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
       start_positions = features["start_positions"]
       end_positions = features["end_positions"]
 
-      #modified
-      question_type = features["question_type"]
-
-
       start_loss = compute_loss(start_logits, start_positions)
       end_loss = compute_loss(end_logits, end_positions)
 
@@ -820,12 +888,12 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder):
       "segment_ids": tf.FixedLenFeature([seq_length], tf.int64),
   }
 
+  #modified
+  name_to_features["question_type"] = tf.FixedLenFeature([], tf.string)
+
   if is_training:
     name_to_features["start_positions"] = tf.FixedLenFeature([], tf.int64)
     name_to_features["end_positions"] = tf.FixedLenFeature([], tf.int64)
-
-    #modified
-    name_to_features["question_type"] = tf.FixedLenFeature([], tf.int64)
 
   def _decode_record(record, name_to_features):
     """Decodes a record to a TensorFlow example."""
@@ -847,6 +915,7 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder):
 
     # For training, we want a lot of parallel reading and shuffling.
     # For eval, we want no shuffling and parallel reading doesn't matter.
+
     d = tf.data.TFRecordDataset(input_file)
     if is_training:
       d = d.repeat()
@@ -1202,9 +1271,6 @@ class FeatureWriter(object):
           int64_list=tf.train.Int64List(value=list(values)))
       return feature
 
-    #modified
-    print("---------- Second -------------")
-
 
     features = collections.OrderedDict()
     features["unique_ids"] = create_int_feature([feature.unique_id])
@@ -1212,12 +1278,15 @@ class FeatureWriter(object):
     features["input_mask"] = create_int_feature(feature.input_mask)
     features["segment_ids"] = create_int_feature(feature.segment_ids)
 
+    #modified
+    features["question_type"] = create_int_feature([feature.question_type])
+
+    print("--------------- " + str(feature.question_type))
+    print("--------------- " + str(features["question_type"]))
+
     if self.is_training:
       features["start_positions"] = create_int_feature([feature.start_position])
       features["end_positions"] = create_int_feature([feature.end_position])
-
-      #modified
-      features["question_type"] = create_int_feature([feature.question_type])
 
       impossible = 0
       if feature.is_impossible:
@@ -1296,11 +1365,11 @@ def main(_):
         input_file=FLAGS.train_file, is_training=True)
 
     #modified
-    # num_train_steps = int(
-    #     len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
-
-    num_train_steps = 2*int(
+    num_train_steps = int(
         len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
+
+    # num_train_steps = 2*int(
+    #     len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
 
     # Pre-shuffle the input to avoid having to make a very large shuffle
@@ -1359,11 +1428,6 @@ def main(_):
   if FLAGS.do_predict:
     eval_examples = read_squad_examples(
         input_file=FLAGS.predict_file, is_training=False)
-
-    #modified
-    print("..................")
-    print("length : " + str(len(eval_examples)))
-    print("..................")
 
     eval_writer = FeatureWriter(
         filename=os.path.join(FLAGS.output_dir, "eval.tf_record"),
